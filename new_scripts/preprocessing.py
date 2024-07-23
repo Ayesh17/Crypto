@@ -1,38 +1,36 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-import math
 
 
-def load_data(filepath):
-    df = pd.read_csv(filepath)
-    return df
+def load_data(file_path):
+    return pd.read_csv(file_path, parse_dates=['Date'])
 
 
 def preprocess_data(df, window_size):
-    df['Date'] = pd.to_datetime(df['Date'])
-    df.set_index('Date', inplace=True)
-    data = df['Close'].values
+    df = df.sort_values('Date')
     scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data.reshape(-1, 1))
+    scaled_data = scaler.fit_transform(df['Close'].values.reshape(-1, 1))
 
     X, y = [], []
     for i in range(window_size, len(scaled_data)):
         X.append(scaled_data[i - window_size:i, 0])
         y.append(scaled_data[i, 0])
 
-    X, y = np.array(X), np.array(y)
+    X = np.array(X)
+    y = np.array(y)
+
     return X, y, scaler
 
 
-def split_data(X, y, train_size=0.7, val_size=0.2):
-    train_end = int(len(X) * train_size)
-    val_end = train_end + int(len(X) * val_size)
+def split_data(X, y, train_ratio=0.7, val_ratio=0.15):
+    train_size = int(len(X) * train_ratio)
+    val_size = int(len(X) * val_ratio)
+    test_size = len(X) - train_size - val_size
 
-    X_train, y_train = X[:train_end], y[:train_end]
-    X_val, y_val = X[train_end:val_end], y[train_end:val_end]
-    X_test, y_test = X[val_end:], y[val_end:]
+    X_train, y_train = X[:train_size], y[:train_size]
+    X_val, y_val = X[train_size:train_size + val_size], y[train_size:train_size + val_size]
+    X_test, y_test = X[train_size + val_size:], y[train_size + val_size:]
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 
