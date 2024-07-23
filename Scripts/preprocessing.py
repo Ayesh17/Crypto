@@ -44,7 +44,13 @@ def preprocess_data(data, lookback, window_size):
 
     return X, y, scaler
 
-def split_data(X, y, train_split=0.70, val_split=0.85):
+def split_data(X, y, train_split=0.8, val_split=0.9):
+    # Calculate the index to cut off the last 20%
+    # cutoff_idx = int(len(X) * 0.7)
+    #
+    # # Use the remaining data for splitting
+    # train_idx = int(cutoff_idx * train_split)
+    # val_idx = int(cutoff_idx * val_split)
     train_idx = int(len(X) * train_split)
     val_idx = int(len(X) * val_split)
 
@@ -58,3 +64,5 @@ def split_data(X, y, train_split=0.70, val_split=0.85):
     # print("Test data shape:", X_test.shape, y_test.shape)
 
     return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+
+
