@@ -1,33 +1,49 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import math
 
-def load_and_preprocess_data(file_path, window_size=30):
-    df = pd.read_csv(file_path, parse_dates=['Date'], index_col='Date')
-    df = df[['Close']]  # Keep only the 'close' price for simplicity
-    df = df.dropna()  # Drop missing values
 
+def load_data(filepath):
+    df = pd.read_csv(filepath)
+    return df
+
+
+def preprocess_data(df, window_size):
+    df['Date'] = pd.to_datetime(df['Date'])
+    df.set_index('Date', inplace=True)
+    data = df['Close'].values
     scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(df)
+    scaled_data = scaler.fit_transform(data.reshape(-1, 1))
 
-    def create_dataset(data, window_size):
-        X, y = [], []
-        for i in range(len(data) - window_size):
-            X.append(data[i:i + window_size])
-            y.append(data[i + window_size])
-        return np.array(X), np.array(y)
+    X, y = [], []
+    for i in range(window_size, len(scaled_data)):
+        X.append(scaled_data[i - window_size:i, 0])
+        y.append(scaled_data[i, 0])
 
-    X, y = create_dataset(scaled_data, window_size)
+    X, y = np.array(X), np.array(y)
+    return X, y, scaler
 
-    train_size = int(len(X) * 0.7)
-    val_size = int(len(X) * 0.15)
-    test_size = len(X) - train_size - val_size
 
-    X_train, X_val, X_test = X[:train_size], X[train_size:train_size + val_size], X[train_size + val_size:]
-    y_train, y_val, y_test = y[:train_size], y[train_size:train_size + val_size], y[train_size + val_size:]
+def split_data(X, y, train_size=0.7, val_size=0.2):
+    train_end = int(len(X) * train_size)
+    val_end = train_end + int(len(X) * val_size)
 
-    X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-    X_val = np.reshape(X_val, (X_val.shape[0], X_val.shape[1], 1))
-    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+    X_train, y_train = X[:train_end], y[:train_end]
+    X_val, y_val = X[train_end:val_end], y[train_end:val_end]
+    X_test, y_test = X[val_end:], y[val_end:]
 
-    return X_train, X_val, X_test, y_train, y_val, y_test, scaler, df
+    return X_train, y_train, X_val, y_val, X_test, y_test
+
+
+def inverse_transform(scaler, data):
+    return scaler.inverse_transform(data)
+
+
+def calculate_metrics(y_true, y_pred):
+    mae = mean_absolute_error(y_true, y_pred)
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = math.sqrt(mse)
+    mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+    return mae, mse, rmse, mape

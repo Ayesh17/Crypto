@@ -1,16 +1,26 @@
-import torch
-import torch.nn as nn
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Bidirectional, Dense, Dropout
 
-class LSTMModel(nn.Module):
-    def __init__(self, input_size=1, hidden_layer_size=5, output_size=1):
-        super(LSTMModel, self).__init__()
-        self.hidden_layer_size = hidden_layer_size
-        self.lstm = nn.LSTM(input_size, hidden_layer_size, batch_first=True)
-        self.linear = nn.Linear(hidden_layer_size, output_size)
 
-    def forward(self, input_seq):
-        h0 = torch.zeros(1, input_seq.size(0), self.hidden_layer_size).to(input_seq.device)
-        c0 = torch.zeros(1, input_seq.size(0), self.hidden_layer_size).to(input_seq.device)
-        lstm_out, _ = self.lstm(input_seq, (h0, c0))
-        predictions = self.linear(lstm_out[:, -1])
-        return predictions
+def create_lstm_model(input_shape, units=50, dropout_rate=0.2, optimizer='adam'):
+    model = Sequential()
+    model.add(LSTM(units=units, return_sequences=True, input_shape=input_shape))
+    model.add(Dropout(dropout_rate))
+    model.add(LSTM(units=units))
+    model.add(Dropout(dropout_rate))
+    model.add(Dense(1))
+
+    model.compile(optimizer=optimizer, loss='mean_squared_error')
+    return model
+
+
+def create_bilstm_model(input_shape, units=50, dropout_rate=0.2, optimizer='adam'):
+    model = Sequential()
+    model.add(Bidirectional(LSTM(units=units, return_sequences=True), input_shape=input_shape))
+    model.add(Dropout(dropout_rate))
+    model.add(Bidirectional(LSTM(units=units)))
+    model.add(Dropout(dropout_rate))
+    model.add(Dense(1))
+
+    model.compile(optimizer=optimizer, loss='mean_squared_error')
+    return model

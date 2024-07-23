@@ -1,126 +1,147 @@
 import numpy as np
+import tensorflow as tf
+from tensorflow.keras.callbacks import Callback, ModelCheckpoint
+from tensorflow.keras.models import load_model
+import keras_tuner as kt
+from preprocessing import load_data, preprocess_data, split_data, inverse_transform, calculate_metrics
+from model import create_lstm_model, create_bilstm_model
 import matplotlib.pyplot as plt
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import random
-from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
-from preprocessing import load_and_preprocess_data
-from model import LSTMModel
-import pandas as pd
 
-# Set seeds for reproducibility
-seed = 42
-np.random.seed(seed)
-torch.manual_seed(seed)
-random.seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
-# Check if CUDA is available and set the device to GPU if possible
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+class PrintMetrics(Callback):
+    def __init__(self, validation_data, scaler):
+        self.validation_data = validation_data
+        self.scaler = scaler
 
-# Load and preprocess data
-file_path = '../Dataset/coin_Bitcoin_filtered.csv'
-window_size = 10
-X_train, X_val, X_test, y_train, y_val, y_test, scaler, df = load_and_preprocess_data(file_path, window_size)
+    def on_epoch_end(self, epoch, logs=None):
+        X_val, y_val = self.validation_data
+        y_pred = self.model.predict(X_val)
+        y_val_inv = inverse_transform(self.scaler, y_val.reshape(-1, 1))
+        y_pred_inv = inverse_transform(self.scaler, y_pred)
 
-# Convert data to PyTorch tensors and move them to the appropriate device
-X_train = torch.tensor(X_train, dtype=torch.float32).to(device)
-X_val = torch.tensor(X_val, dtype=torch.float32).to(device)
-X_test = torch.tensor(X_test, dtype=torch.float32).to(device)
-y_train = torch.tensor(y_train, dtype=torch.float32).to(device)
-y_val = torch.tensor(y_val, dtype=torch.float32).to(device)
-y_test = torch.tensor(y_test, dtype=torch.float32).to(device)
+        mae, mse, rmse, mape = calculate_metrics(y_val_inv, y_pred_inv)
+        print(
+            f'Epoch {epoch + 1}: val_loss={logs["val_loss"]:.4f}, val_mae={mae:.4f}, val_mse={mse:.4f}, val_rmse={rmse:.4f}, val_mape={mape:.4f}')
 
-# Create LSTM model and move it to the appropriate device
-model = LSTMModel().to(device)
-loss_function = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# Train the model
-epochs = 20
-train_losses = []
-val_losses = []
+def plot_history(history):
+    plt.figure(figsize=(12, 6))
+    plt.plot(history.history['loss'], label='Train Loss')
+    plt.plot(history.history['val_loss'], label='Validation Loss')
+    plt.title('Loss Over Epochs')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
 
-for epoch in range(epochs):
-    model.train()
-    optimizer.zero_grad()
 
-    y_pred = model(X_train)
-    single_loss = loss_function(y_pred, y_train)
-    single_loss.backward()
-    optimizer.step()
+def plot_predictions(y_true, y_pred, title):
+    plt.figure(figsize=(12, 6))
+    plt.plot(y_true, label='Actual')
+    plt.plot(y_pred, label='Predicted')
+    plt.title(title)
+    plt.xlabel('Time')
+    plt.ylabel('Price')
+    plt.legend()
+    plt.show()
 
-    model.eval()
-    with torch.no_grad():
-        val_pred = model(X_val)
-        val_loss = loss_function(val_pred, y_val)
 
-    train_losses.append(single_loss.item())
-    val_losses.append(val_loss.item())
+def build_lstm_model(hp):
+    input_shape = (60, 1)
+    units = hp.Int('units', min_value=32, max_value=512, step=32)
+    dropout_rate = hp.Float('dropout_rate', min_value=0.2, max_value=0.5, step=0.1)
+    learning_rate = hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
-    print(f'Epoch {epoch + 1} Train Loss: {single_loss.item()} Validation Loss: {val_loss.item()}')
+    return create_lstm_model(input_shape, units=units, dropout_rate=dropout_rate, optimizer=optimizer)
 
-# Step 5: Evaluation on the test set
-model.eval()
-with torch.no_grad():
-    y_pred = model(X_test)
-    y_pred_inverse = scaler.inverse_transform(y_pred.cpu().numpy())
-    y_test_inverse = scaler.inverse_transform(y_test.cpu().numpy().reshape(-1, 1))
 
-mae = mean_absolute_error(y_test_inverse, y_pred_inverse)
-mse = mean_squared_error(y_test_inverse, y_pred_inverse)
-rmse = np.sqrt(mse)
-mape = mean_absolute_percentage_error(y_test_inverse, y_pred_inverse)
+def hyperparameter_tuning(X_train, y_train, X_val, y_val):
+    tuner = kt.Hyperband(
+        build_lstm_model,
+        objective='val_loss',
+        max_epochs=10,
+        factor=3,
+        directory='my_dir',
+        project_name='intro_to_kt'
+    )
 
-print(f'Test MAE: {mae}')
-print(f'Test MSE: {mse}')
-print(f'Test RMSE: {rmse}')
-print(f'Test MAPE: {mape}')
+    stop_early = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5)
+    tuner.search(X_train, y_train, epochs=50, validation_data=(X_val, y_val), callbacks=[stop_early])
 
-# Plot the predictions against the actual values
-plt.figure(figsize=(10, 6))
-plt.plot(df.index[len(df) - len(y_test_inverse):], y_test_inverse, label='Actual')
-plt.plot(df.index[len(df) - len(y_test_inverse):], y_pred_inverse, label='Predicted')
-plt.xlabel('Date')
-plt.ylabel('Close Price')
-plt.title('Bitcoin Price Prediction')
-plt.legend()
-plt.show()
+    best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+    return best_hps
 
-# Step 6: Forecasting future prices
-future_steps = 30  # Predicting next 30 days
-last_window = X_test[-1].reshape((1, window_size, 1)).to(device)
-future_forecast = []
 
-model.eval()
-for _ in range(future_steps):
-    with torch.no_grad():
-        pred = model(last_window)
-        future_forecast.append(pred.item())
-        last_window = torch.cat((last_window[:, 1:, :], pred.reshape(1, 1, 1)), dim=1)
+def train_and_evaluate(model_type='LSTM', window_size=60, epochs=50, batch_size=32):
+    # df = load_data('../Dataset/coin_Bitcoin.csv')
+    # df = load_data('../Dataset/coin_Bitcoin_filtered.csv')
+    df = load_data('../Dataset/coin_Ethereum.csv')
 
-future_forecast = scaler.inverse_transform(np.array(future_forecast).reshape(-1, 1))
+    X, y, scaler = preprocess_data(df, window_size)
+    X_train, y_train, X_val, y_val, X_test, y_test = split_data(X, y)
 
-plt.figure(figsize=(10, 6))
-plt.plot(df, label='Historical')
-plt.plot(pd.date_range(start=df.index[-1], periods=future_steps, freq='D'), future_forecast, label='Forecast')
-plt.xlabel('Date')
-plt.ylabel('Close Price')
-plt.title('Future Bitcoin Price Forecast')
-plt.legend()
-plt.show()
+    X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+    X_val = np.reshape(X_val, (X_val.shape[0], X_val.shape[1], 1))
+    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
 
-# Plot the training and validation metrics
-plt.figure(figsize=(12, 8))
-plt.plot(train_losses, label='Train Loss')
-plt.plot(val_losses, label='Validation Loss')
-plt.xlabel('Epoch')
-plt.ylabel('Loss')
-plt.title('Training and Validation Loss')
-plt.legend()
-plt.show()
+    best_hps = hyperparameter_tuning(X_train, y_train, X_val, y_val)
+
+    if model_type == 'LSTM':
+        model = create_lstm_model(
+            input_shape=(window_size, 1),
+            units=best_hps.get('units'),
+            dropout_rate=best_hps.get('dropout_rate'),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=best_hps.get('learning_rate'))
+        )
+    else:
+        model = create_bilstm_model(
+            input_shape=(window_size, 1),
+            units=best_hps.get('units'),
+            dropout_rate=best_hps.get('dropout_rate'),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=best_hps.get('learning_rate'))
+        )
+
+    checkpoint_callback = ModelCheckpoint('best_model.keras', monitor='val_loss', save_best_only=True, mode='min',
+                                          verbose=1)
+    metrics_callback = PrintMetrics(validation_data=(X_val, y_val), scaler=scaler)
+
+    history = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=epochs, batch_size=batch_size,
+                        callbacks=[metrics_callback, checkpoint_callback])
+
+    plot_history(history)
+
+    best_model = load_model('best_model.keras')
+
+    y_train_pred = best_model.predict(X_train)
+    y_val_pred = best_model.predict(X_val)
+    y_test_pred = best_model.predict(X_test)
+
+    y_train_inv = inverse_transform(scaler, y_train.reshape(-1, 1))
+    y_train_pred_inv = inverse_transform(scaler, y_train_pred)
+    y_val_inv = inverse_transform(scaler, y_val.reshape(-1, 1))
+    y_val_pred_inv = inverse_transform(scaler, y_val_pred)
+    y_test_inv = inverse_transform(scaler, y_test.reshape(-1, 1))
+    y_test_pred_inv = inverse_transform(scaler, y_test_pred)
+
+    plot_predictions(y_train_inv, y_train_pred_inv, 'Train Data: Actual vs Predicted')
+    plot_predictions(y_val_inv, y_val_pred_inv, 'Validation Data: Actual vs Predicted')
+    plot_predictions(y_test_inv, y_test_pred_inv, 'Test Data: Actual vs Predicted')
+
+    test_mae, test_mse, test_rmse, test_mape = calculate_metrics(y_test_inv, y_test_pred_inv)
+    print(f'Test MAE: {test_mae:.4f}')
+    print(f'Test MSE: {test_mse:.4f}')
+    print(f'Test RMSE: {test_rmse:.4f}')
+    print(f'Test MAPE: {test_mape:.4f}')
+
+    return best_model
+
+
+if __name__ == "__main__":
+    model_type = 'LSTM'  # or 'biLSTM'
+    window_size = 60
+    epochs = 100
+    batch_size = 32
+
+    best_model = train_and_evaluate(model_type=model_type, window_size=window_size, epochs=epochs,
+                                    batch_size=batch_size)

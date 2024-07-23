@@ -110,7 +110,7 @@ if __name__ == '__main__':
 
     # Preprocess data
     lookback = 20
-    window_size = 30
+    window_size = 10
     X, y, scaler = preprocess_data(data, lookback, window_size)
     (X_train, y_train), (X_val, y_val), (X_test, y_test) = split_data(X, y)
 
